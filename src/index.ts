@@ -6,9 +6,9 @@
  *  1. Project: `<repo-root>/.pi/extensions/<extension-id>/config.json`
  *  2. Global:  `<agent-dir>/extensions/<extension-id>/config.json`
  *
- * The first file that exists and parses is the only one read, so a project config
- * replaces the global one rather than overriding individual fields. Defaults still
- * fill in whatever the winning file leaves out.
+ * What happens when both exist is the extension author's call, via `strategy`:
+ * `"first-match"` reads only the project file, `"merge"` layers it over the global
+ * one field by field. Defaults always sit underneath whatever is read.
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -92,11 +92,36 @@ export function resolveConfigPath(
   return getConfigPaths(extensionId, options).find((path) => existsSync(path)) ?? null;
 }
 
+/**
+ * How to combine config files when more than one exists.
+ *
+ * - `"first-match"` (the default) reads only the highest-priority file. A project
+ *   config replaces the global one, so it has to be complete. Which file is in
+ *   effect is always obvious.
+ * - `"merge"` layers higher-priority files over lower ones, key by key, so a project
+ *   config can override one setting and inherit the rest.
+ *
+ * Merging is **shallow**: a nested object in a project file replaces its global
+ * counterpart wholesale rather than being merged into it. For a config shaped like
+ * `{ phoenix: { endpoint, project } }`, setting `phoenix.project` in a project file
+ * therefore drops the global `phoenix.endpoint` — flat config shapes merge far more
+ * predictably than nested ones.
+ */
+export type ConfigStrategy = "first-match" | "merge";
+
+export interface LoadConfigOptions extends ConfigLocationOptions {
+  /** Defaults to `"first-match"`. */
+  strategy?: ConfigStrategy;
+}
+
 export interface LoadedConfig<T> {
-  /** Defaults merged with the winning file, or just the defaults if nothing was read. */
+  /** Defaults with every contributing file applied over them. */
   config: T;
-  /** The file the config came from, or `null` when no readable config existed. */
-  path: string | null;
+  /**
+   * The files that contributed, lowest priority first, so the last entry is the one
+   * that had the final say. Empty when nothing readable was found.
+   */
+  sources: string[];
   /** Every candidate path in priority order, whether or not it existed. */
   candidates: string[];
   /**
@@ -107,7 +132,7 @@ export interface LoadedConfig<T> {
 }
 
 /**
- * Read the first usable config file, merged over `defaults`.
+ * Read config from disk, applied over `defaults`.
  *
  * A file that exists but holds malformed JSON (or a non-object) is reported in
  * `diagnostics` and skipped, falling through to the next location: a stray project
@@ -116,35 +141,61 @@ export interface LoadedConfig<T> {
 export function loadConfig<T extends object>(
   extensionId: string,
   defaults: T,
-  options: ConfigLocationOptions = {},
+  options: LoadConfigOptions = {},
 ): LoadedConfig<T> {
+  const strategy = options.strategy ?? "first-match";
   const candidates = getConfigPaths(extensionId, options);
   const diagnostics: string[] = [];
+  const found: Array<{ path: string; values: Partial<T> }> = [];
 
   for (const path of candidates) {
-    if (!existsSync(path)) continue;
+    const values = readConfigFile<T>(path, diagnostics);
+    if (!values) continue;
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(path, "utf-8"));
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      diagnostics.push(`${path} is not valid JSON (${reason}); ignoring it.`);
-      continue;
-    }
-
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      diagnostics.push(`${path} must hold a JSON object; ignoring it.`);
-      continue;
-    }
-
-    return {
-      config: { ...defaults, ...(parsed as Partial<T>) },
-      path,
-      candidates,
-      diagnostics,
-    };
+    found.push({ path, values });
+    if (strategy === "first-match") break;
   }
 
-  return { config: { ...defaults }, path: null, candidates, diagnostics };
+  // `candidates` runs highest priority first, so apply it back to front and let the
+  // higher-priority file win. Under "first-match" there is at most one entry anyway.
+  const contributing = found.reverse();
+
+  let config = { ...defaults };
+  for (const { values } of contributing) {
+    config = { ...config, ...values };
+  }
+
+  return {
+    config,
+    sources: contributing.map(({ path }) => path),
+    candidates,
+    diagnostics,
+  };
+}
+
+/**
+ * Parse one config file. Returns `null` when it is absent or unusable, appending a
+ * note to `diagnostics` in the latter case.
+ */
+function readConfigFile<T extends object>(
+  path: string,
+  diagnostics: string[],
+): Partial<T> | null {
+  if (!existsSync(path)) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf-8"));
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    diagnostics.push(`${path} is not valid JSON (${reason}); ignoring it.`);
+    return null;
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    diagnostics.push(`${path} must hold a JSON object; ignoring it.`);
+    return null;
+  }
+
+  return parsed as Partial<T>;
 }

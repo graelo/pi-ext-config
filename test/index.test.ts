@@ -144,15 +144,16 @@ describe("loadConfig", () => {
   it("returns the defaults when no config exists", () => {
     const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
     expect(loaded.config).toEqual(DEFAULTS);
-    expect(loaded.path).toBeNull();
+    expect(loaded.sources).toEqual([]);
     expect(loaded.diagnostics).toEqual([]);
     expect(loaded.candidates).toHaveLength(2);
   });
 
-  it("merges the winning file over the defaults", () => {
-    writeGlobalConfig(JSON.stringify({ timeoutMs: 1000 }));
+  it("applies the winning file over the defaults", () => {
+    const global = writeGlobalConfig(JSON.stringify({ timeoutMs: 1000 }));
     const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
     expect(loaded.config).toEqual({ url: "http://localhost", timeoutMs: 1000 });
+    expect(loaded.sources).toEqual([global]);
   });
 
   it("reads the project file instead of the global one", () => {
@@ -160,7 +161,7 @@ describe("loadConfig", () => {
     const project = writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
 
     const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
-    expect(loaded.path).toBe(project);
+    expect(loaded.sources).toEqual([project]);
     // First match wins: the global timeoutMs is not layered in, the default is used.
     expect(loaded.config).toEqual({ url: "http://project", timeoutMs: 30000 });
   });
@@ -198,8 +199,21 @@ describe("loadConfig", () => {
 
     const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
     expect(loaded.config).toEqual(DEFAULTS);
-    expect(loaded.path).toBeNull();
+    expect(loaded.sources).toEqual([]);
     expect(loaded.diagnostics).toHaveLength(2);
+  });
+
+  it("is explicitly first-match by default", () => {
+    writeGlobalConfig(JSON.stringify({ timeoutMs: 1000 }));
+    writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
+
+    const implicit = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
+    const explicit = loadConfig(EXTENSION_ID, DEFAULTS, {
+      cwd: repo,
+      agentDir,
+      strategy: "first-match",
+    });
+    expect(implicit).toEqual(explicit);
   });
 
   it("does not share state between calls", () => {
@@ -210,5 +224,57 @@ describe("loadConfig", () => {
     const second = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
     expect(second.config.timeoutMs).toBe(1);
     expect(DEFAULTS.timeoutMs).toBe(30000);
+  });
+});
+
+describe('loadConfig with strategy: "merge"', () => {
+  const merge = { strategy: "merge" } as const;
+
+  it("layers the project file over the global one", () => {
+    const global = writeGlobalConfig(
+      JSON.stringify({ url: "http://global", timeoutMs: 1000 }),
+    );
+    const project = writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
+
+    const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...merge });
+    // The project url wins; the global timeoutMs survives instead of falling back.
+    expect(loaded.config).toEqual({ url: "http://project", timeoutMs: 1000 });
+    // Lowest priority first, so the last source is the one that had the final say.
+    expect(loaded.sources).toEqual([global, project]);
+  });
+
+  it("behaves like first-match when only one file exists", () => {
+    writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
+
+    const merged = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...merge });
+    const first = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
+    expect(merged).toEqual(first);
+  });
+
+  it("still skips a malformed file and keeps the usable one", () => {
+    const global = writeGlobalConfig(JSON.stringify({ url: "http://global" }));
+    writeProjectConfig(repo, "not json {{{");
+
+    const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...merge });
+    expect(loaded.config.url).toBe("http://global");
+    expect(loaded.sources).toEqual([global]);
+    expect(loaded.diagnostics).toHaveLength(1);
+  });
+
+  it("replaces nested objects wholesale rather than deep-merging them", () => {
+    interface Nested {
+      phoenix: { endpoint?: string; project?: string };
+    }
+    const defaults: Nested = { phoenix: {} };
+    writeGlobalConfig(JSON.stringify({ phoenix: { endpoint: "http://global" } }));
+    writeProjectConfig(repo, JSON.stringify({ phoenix: { project: "mine" } }));
+
+    const loaded = loadConfig<Nested>(EXTENSION_ID, defaults, {
+      cwd: repo,
+      agentDir,
+      ...merge,
+    });
+    // Merging is shallow: the global endpoint does not survive under a nested key.
+    expect(loaded.config.phoenix).toEqual({ project: "mine" });
   });
 });

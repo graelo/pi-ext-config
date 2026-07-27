@@ -1,7 +1,7 @@
 {
   "name": "@graelo/pi-ext-config",
   "version": "0.0.1",
-  "description": "Shared config-file resolution for pi extensions: project-local before global, first match wins",
+  "description": "Shared config-file resolution for pi extensions: project-local before global, with a first-match or merge strategy",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -44,7 +44,8 @@
     "pi",
     "pi-extension",
     "pi-coding-agent",
-    "config"
+    "config",
+    "configuration"
   ],
   "engines": {
     "node": ">=18"
