@@ -1,0 +1,57 @@
+{
+  "name": "@graelo/pi-ext-config",
+  "version": "0.0.1",
+  "description": "Shared config-file resolution for pi extensions: project-local before global, first match wins",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "check": "tsc --noEmit",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.15.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/graelo/pi-ext-config.git"
+  },
+  "homepage": "https://github.com/graelo/pi-ext-config#readme",
+  "bugs": {
+    "url": "https://github.com/graelo/pi-ext-config/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "pi-coding-agent",
+    "config"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "graelo",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
