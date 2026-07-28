@@ -41,12 +41,14 @@ interface MyConfig {
 
 const DEFAULTS: MyConfig = { url: "http://localhost:8080", timeoutMs: 30000 };
 
-const { config, sources, diagnostics } = loadConfig("pi-my-extension", DEFAULTS, {
+const { config, diagnostics } = loadConfig("pi-my-extension", DEFAULTS, {
   cwd: ctx.cwd,
 });
 
-for (const problem of diagnostics) console.warn(problem);
-for (const source of sources) console.info(`Loaded config from ${source}`);
+for (const problem of diagnostics) {
+  if (ctx.hasUI) ctx.ui.notify(problem, "warning");
+  else console.warn(problem);
+}
 ```
 
 To layer a project config over the global one instead:
@@ -87,7 +89,15 @@ location — a stray project config should not strand an extension with no
 configuration at all. This holds under every strategy.
 
 Nothing is written to the console: reporting is the extension's call, since only
-it knows whether that means `console.warn` or `ctx.ui.notify`.
+it knows whether that means `console.warn` or `ctx.ui.notify`. Prefer
+`ctx.ui.notify` whenever `ctx.hasUI` — pi loads extensions in-process and does
+not capture their output, so a `console.*` call in TUI mode writes straight onto
+the terminal the renderer is drawing on. Plain `console` is right in print
+(`-p`) and JSON modes, where stdout really is the output.
+
+A diagnostic distinguishes a file that could not be **read** from one whose JSON
+could not be **parsed**; both are worth showing verbatim, since they send the
+user to different places.
 
 #### Choosing a strategy
 
