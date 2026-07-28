@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -184,6 +184,36 @@ describe("loadConfig", () => {
     expect(loaded.diagnostics).toHaveLength(1);
     expect(loaded.diagnostics[0]).toContain("not valid JSON");
   });
+
+  it("blames the read, not the JSON, when the path is a directory", () => {
+    // EISDIR: the file is unopenable, not malformed. Saying "not valid JSON" would
+    // send the user off editing something that does not exist.
+    mkdirSync(join(repo, ".pi", "extensions", EXTENSION_ID, CONFIG_FILENAME), {
+      recursive: true,
+    });
+    writeGlobalConfig(JSON.stringify({ url: "http://global" }));
+
+    const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
+    expect(loaded.config.url).toBe("http://global");
+    expect(loaded.diagnostics).toHaveLength(1);
+    expect(loaded.diagnostics[0]).toContain("could not be read");
+    expect(loaded.diagnostics[0]).not.toContain("not valid JSON");
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "blames the read, not the JSON, when the file is unreadable",
+    () => {
+      const project = writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
+      chmodSync(project, 0o000);
+      writeGlobalConfig(JSON.stringify({ url: "http://global" }));
+
+      const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
+      // Perfectly valid JSON that pi simply cannot open.
+      expect(loaded.config.url).toBe("http://global");
+      expect(loaded.diagnostics[0]).toContain("could not be read");
+      expect(loaded.diagnostics[0]).not.toContain("not valid JSON");
+    },
+  );
 
   it("skips a config that is not a JSON object", () => {
     writeProjectConfig(repo, JSON.stringify(["nope"]));

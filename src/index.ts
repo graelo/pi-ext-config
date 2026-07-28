@@ -226,6 +226,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /**
  * Parse one config file. Returns `null` when it is absent or unusable, appending a
  * note to `diagnostics` in the latter case.
+ *
+ * Reading and parsing are deliberately separate: a file pi cannot open is a different
+ * problem from one holding bad JSON, and the diagnostic is all the caller has to go
+ * on. Blaming the JSON for an `EACCES` sends the user off editing a healthy file.
  */
 function readConfigFile<T extends object>(
   path: string,
@@ -233,9 +237,20 @@ function readConfigFile<T extends object>(
 ): Partial<T> | null {
   if (!existsSync(path)) return null;
 
+  let contents: string;
+  try {
+    contents = readFileSync(path, "utf-8");
+  } catch (err) {
+    // Vanished since the check above — that is an absent config, not a broken one.
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    const reason = err instanceof Error ? err.message : String(err);
+    diagnostics.push(`${path} could not be read (${reason}); ignoring it.`);
+    return null;
+  }
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf-8"));
+    parsed = JSON.parse(contents);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     diagnostics.push(`${path} is not valid JSON (${reason}); ignoring it.`);
