@@ -1,6 +1,6 @@
 {
   "name": "@graelo/pi-ext-config",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Shared config-file resolution for pi extensions: project-local before global, with a first-match, shallow-merge or deep-merge strategy",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,7 +12,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
