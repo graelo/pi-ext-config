@@ -227,8 +227,8 @@ describe("loadConfig", () => {
   });
 });
 
-describe('loadConfig with strategy: "merge"', () => {
-  const merge = { strategy: "merge" } as const;
+describe('loadConfig with strategy: "shallow-merge"', () => {
+  const merge = { strategy: "shallow-merge" } as const;
 
   it("layers the project file over the global one", () => {
     const global = writeGlobalConfig(
@@ -274,7 +274,186 @@ describe('loadConfig with strategy: "merge"', () => {
       agentDir,
       ...merge,
     });
-    // Merging is shallow: the global endpoint does not survive under a nested key.
+    // Shallow: the global endpoint does not survive under a nested key.
     expect(loaded.config.phoenix).toEqual({ project: "mine" });
+  });
+});
+
+describe('loadConfig with strategy: "deep-merge"', () => {
+  const deep = { strategy: "deep-merge" } as const;
+
+  it("layers the project file over the global one", () => {
+    const global = writeGlobalConfig(
+      JSON.stringify({ url: "http://global", timeoutMs: 1000 }),
+    );
+    const project = writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
+
+    const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...deep });
+    expect(loaded.config).toEqual({ url: "http://project", timeoutMs: 1000 });
+    expect(loaded.sources).toEqual([global, project]);
+  });
+
+  it("merges nested objects recursively", () => {
+    interface Nested {
+      phoenix: { endpoint?: string; project?: string };
+    }
+    const defaults: Nested = { phoenix: {} };
+    writeGlobalConfig(JSON.stringify({ phoenix: { endpoint: "http://global" } }));
+    writeProjectConfig(repo, JSON.stringify({ phoenix: { project: "mine" } }));
+
+    const loaded = loadConfig<Nested>(EXTENSION_ID, defaults, {
+      cwd: repo,
+      agentDir,
+      ...deep,
+    });
+    // Deep merge: both keys survive because each file only overrides its own.
+    expect(loaded.config.phoenix).toEqual({
+      endpoint: "http://global",
+      project: "mine",
+    });
+  });
+
+  it("replaces arrays wholesale (no element-wise concatenation)", () => {
+    interface ArrayConfig {
+      tags: string[];
+    }
+    const defaults: ArrayConfig = { tags: [] };
+    writeGlobalConfig(JSON.stringify({ tags: ["a", "b"] }));
+    writeProjectConfig(repo, JSON.stringify({ tags: ["c"] }));
+
+    const loaded = loadConfig<ArrayConfig>(EXTENSION_ID, defaults, {
+      cwd: repo,
+      agentDir,
+      ...deep,
+    });
+    expect(loaded.config.tags).toEqual(["c"]);
+  });
+
+  it("lets an explicit null clear a nested object", () => {
+    interface Nullable {
+      phoenix: { endpoint: string } | null;
+    }
+    const defaults: Nullable = { phoenix: { endpoint: "http://default" } };
+    writeGlobalConfig(JSON.stringify({ phoenix: { endpoint: "http://global" } }));
+    writeProjectConfig(repo, JSON.stringify({ phoenix: null }));
+
+    const loaded = loadConfig<Nullable>(EXTENSION_ID, defaults, {
+      cwd: repo,
+      agentDir,
+      ...deep,
+    });
+    // Only plain objects are merged; null replaces, so a repo can opt out entirely.
+    expect(loaded.config.phoenix).toBeNull();
+  });
+
+  it("merges three layers (defaults → global → project)", () => {
+    interface Multi {
+      a: { x: number; y: number };
+      b: number;
+    }
+    const defaults: Multi = { a: { x: 1, y: 2 }, b: 10 };
+    writeGlobalConfig(JSON.stringify({ a: { x: 10 }, b: 20 }));
+    writeProjectConfig(repo, JSON.stringify({ a: { y: 99 } }));
+
+    const loaded = loadConfig<Multi>(EXTENSION_ID, defaults, {
+      cwd: repo,
+      agentDir,
+      ...deep,
+    });
+    expect(loaded.config).toEqual({ a: { x: 10, y: 99 }, b: 20 });
+  });
+
+  it("behaves like first-match when only one file exists", () => {
+    writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
+
+    const merged = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...deep });
+    const first = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir });
+    expect(merged).toEqual(first);
+  });
+
+  it("still skips a malformed file and keeps the usable one", () => {
+    const global = writeGlobalConfig(JSON.stringify({ url: "http://global" }));
+    writeProjectConfig(repo, "not json {{{");
+
+    const loaded = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...deep });
+    expect(loaded.config.url).toBe("http://global");
+    expect(loaded.sources).toEqual([global]);
+    expect(loaded.diagnostics).toHaveLength(1);
+  });
+
+  it("does not share state between calls", () => {
+    writeGlobalConfig(JSON.stringify({ timeoutMs: 1 }));
+    const first = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...deep });
+    first.config.timeoutMs = 999;
+
+    const second = loadConfig(EXTENSION_ID, DEFAULTS, { cwd: repo, agentDir, ...deep });
+    expect(second.config.timeoutMs).toBe(1);
+    expect(DEFAULTS.timeoutMs).toBe(30000);
+  });
+});
+
+describe("loadConfig isolation from defaults", () => {
+  interface Nested {
+    phoenix: { endpoint: string; project?: string };
+    timeoutMs: number;
+  }
+
+  const strategies = ["first-match", "shallow-merge", "deep-merge"] as const;
+
+  function nestedDefaults(): Nested {
+    return { phoenix: { endpoint: "http://default" }, timeoutMs: 30000 };
+  }
+
+  it.each(strategies)(
+    "does not hand back a nested default by reference under %s",
+    (strategy) => {
+      const defaults = nestedDefaults();
+      // Touches only a top-level key, so `phoenix` comes straight from the defaults —
+      // the case a shallow copy of the seed would alias.
+      writeGlobalConfig(JSON.stringify({ timeoutMs: 1 }));
+
+      const loaded = loadConfig<Nested>(EXTENSION_ID, defaults, {
+        cwd: repo,
+        agentDir,
+        strategy,
+      });
+      loaded.config.phoenix.endpoint = "MUTATED";
+
+      expect(defaults.phoenix.endpoint).toBe("http://default");
+    },
+  );
+
+  it.each(strategies)(
+    "keeps a later call pristine after a caller mutates a nested value under %s",
+    (strategy) => {
+      // The harm the isolation exists to prevent: extensions keep DEFAULTS as a
+      // module-level constant, so one mutation would outlive the call that made it.
+      const defaults = nestedDefaults();
+      writeGlobalConfig(JSON.stringify({ timeoutMs: 1 }));
+      const options = { cwd: repo, agentDir, strategy } as const;
+
+      loadConfig<Nested>(EXTENSION_ID, defaults, options).config.phoenix.endpoint =
+        "MUTATED";
+
+      const second = loadConfig<Nested>(EXTENSION_ID, defaults, options);
+      expect(second.config.phoenix.endpoint).toBe("http://default");
+    },
+  );
+
+  it("clones structurally rather than through JSON, so a Date survives", () => {
+    interface WithDate {
+      since: Date;
+    }
+    const defaults: WithDate = { since: new Date("2020-01-01T00:00:00Z") };
+    writeGlobalConfig(JSON.stringify({}));
+
+    const loaded = loadConfig<WithDate>(EXTENSION_ID, defaults, {
+      cwd: repo,
+      agentDir,
+      strategy: "deep-merge",
+    });
+    expect(loaded.config.since).toBeInstanceOf(Date);
+    expect(loaded.config.since.getTime()).toBe(defaults.since.getTime());
+    expect(loaded.config.since).not.toBe(defaults.since);
   });
 });

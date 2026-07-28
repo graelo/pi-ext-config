@@ -7,8 +7,9 @@
  *  2. Global:  `<agent-dir>/extensions/<extension-id>/config.json`
  *
  * What happens when both exist is the extension author's call, via `strategy`:
- * `"first-match"` reads only the project file, `"merge"` layers it over the global
- * one field by field. Defaults always sit underneath whatever is read.
+ * `"first-match"` reads only the project file, while `"shallow-merge"` and
+ * `"deep-merge"` layer it over the global one — the first key by top-level key, the
+ * second recursively. Defaults always sit underneath whatever is read.
  */
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -98,16 +99,15 @@ export function resolveConfigPath(
  * - `"first-match"` (the default) reads only the highest-priority file. A project
  *   config replaces the global one, so it has to be complete. Which file is in
  *   effect is always obvious.
- * - `"merge"` layers higher-priority files over lower ones, key by key, so a project
- *   config can override one setting and inherit the rest.
- *
- * Merging is **shallow**: a nested object in a project file replaces its global
- * counterpart wholesale rather than being merged into it. For a config shaped like
- * `{ phoenix: { endpoint, project } }`, setting `phoenix.project` in a project file
- * therefore drops the global `phoenix.endpoint` — flat config shapes merge far more
- * predictably than nested ones.
+ * - `"shallow-merge"` layers higher-priority files over lower ones by top-level key,
+ *   so a project config can override one setting and inherit the rest. A nested
+ *   object in a project file replaces its global counterpart wholesale rather than
+ *   being merged into it — which is what you want when its keys travel together.
+ * - `"deep-merge"` layers files recursively, so nested objects are merged key by
+ *   key at every level. Arrays are still replaced wholesale — they are rarely
+ *   intended to be concatenated.
  */
-export type ConfigStrategy = "first-match" | "merge";
+export type ConfigStrategy = "first-match" | "shallow-merge" | "deep-merge";
 
 export interface LoadConfigOptions extends ConfigLocationOptions {
   /** Defaults to `"first-match"`. */
@@ -137,6 +137,13 @@ export interface LoadedConfig<T> {
  * A file that exists but holds malformed JSON (or a non-object) is reported in
  * `diagnostics` and skipped, falling through to the next location: a stray project
  * config should not strand an extension with no configuration at all.
+ *
+ * The returned config shares nothing with `defaults`, so mutating it is safe even
+ * when `defaults` is the module-level constant it usually is. That costs a
+ * `structuredClone`, so `defaults` must be structured-cloneable: JSON-shaped values
+ * plus `Date`, `Map`, `Set` and friends. A function in there throws, and a class
+ * instance comes back as a plain object with its prototype gone — neither belongs in
+ * something that mirrors a `config.json`.
  */
 export function loadConfig<T extends object>(
   extensionId: string,
@@ -160,9 +167,13 @@ export function loadConfig<T extends object>(
   // higher-priority file win. Under "first-match" there is at most one entry anyway.
   const contributing = found.reverse();
 
-  let config = { ...defaults };
+  const apply = strategy === "deep-merge" ? deepMerge : shallowMerge;
+
+  // Cloned, not spread: a nested default no file overrides would otherwise be handed
+  // back by reference, and one caller mutating it would poison every later call.
+  let config = structuredClone(defaults);
   for (const { values } of contributing) {
-    config = { ...config, ...values };
+    config = apply(config, values);
   }
 
   return {
@@ -171,6 +182,45 @@ export function loadConfig<T extends object>(
     candidates,
     diagnostics,
   };
+}
+
+/** Layer `overlay` over `base` by top-level key, leaving both untouched. */
+function shallowMerge<T extends object>(base: T, overlay: Partial<T>): T {
+  return { ...base, ...overlay };
+}
+
+/**
+ * Recursively merge `overlay` into `base`. Plain objects are merged key by key at
+ * every level; everything else (arrays, primitives, `null`) is replaced.
+ *
+ * Never mutates either argument — always returns a new object. The cast is the price
+ * of spreading a generic into an index signature; it is contained to this function.
+ */
+function deepMerge<T extends object>(base: T, overlay: Partial<T>): T {
+  const result = { ...base } as Record<string, unknown>;
+
+  for (const [key, overlayVal] of Object.entries(overlay)) {
+    const baseVal = result[key];
+    result[key] =
+      isPlainObject(baseVal) && isPlainObject(overlayVal)
+        ? deepMerge(baseVal, overlayVal)
+        : overlayVal;
+  }
+
+  return result as T;
+}
+
+/**
+ * Whether `value` is a bare object literal, as opposed to an array or a class
+ * instance. Only these are merged key by key: a `Date` or a `Map` in `defaults` is
+ * a value, not a namespace, and must be replaced wholesale.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 /**

@@ -15,7 +15,8 @@ What happens when both exist is yours to choose, per extension:
 | `strategy` | behaviour |
 | --- | --- |
 | `"first-match"` (default) | Only the project file is read. It **replaces** the global one, so it has to be complete. Which file is in effect is always obvious. |
-| `"merge"` | The project file is layered **over** the global one, key by key, so it can override one setting and inherit the rest. |
+| `"shallow-merge"` | The project file is layered **over** the global one by top-level key, so it can override one setting and inherit the rest. A nested object replaces its counterpart wholesale. |
+| `"deep-merge"` | As above, but **recursive**: nested objects are merged key by key at every level. |
 
 Defaults always sit underneath whatever is read.
 
@@ -53,7 +54,7 @@ To layer a project config over the global one instead:
 ```ts
 const { config } = loadConfig("pi-my-extension", DEFAULTS, {
   cwd: ctx.cwd,
-  strategy: "merge",
+  strategy: "shallow-merge", // or "deep-merge" for nested config
 });
 ```
 
@@ -78,12 +79,12 @@ interface LoadedConfig<T> {
 
 `sources` is empty when nothing readable was found, and holds at most one entry
 under `"first-match"`. Its **last** entry is the file that had the final say,
-under either strategy — that's the one to name in a "loaded config from…" line.
+under any strategy — that's the one to name in a "loaded config from…" line.
 
 A file that exists but holds malformed JSON (or something that isn't a JSON
 object) is reported in `diagnostics` and skipped, falling through to the next
 location — a stray project config should not strand an extension with no
-configuration at all. This holds under both strategies.
+configuration at all. This holds under every strategy.
 
 Nothing is written to the console: reporting is the extension's call, since only
 it knows whether that means `console.warn` or `ctx.ui.notify`.
@@ -92,15 +93,30 @@ it knows whether that means `console.warn` or `ctx.ui.notify`.
 
 `"first-match"` suits config that is small or whose keys travel together — a
 project file is then a deliberate, complete statement, and there is never any
-doubt about which file is live. `"merge"` suits config with several independent
-knobs, where a repo wants to change one and inherit the rest.
+doubt about which file is live. The two merge strategies suit config with
+several independent knobs, where a repo wants to change one and inherit the
+rest.
 
-One caveat for `"merge"`: it is **shallow**. A nested object in a project file
-replaces its global counterpart wholesale rather than being merged into it. For
-a config shaped like `{ phoenix: { endpoint, project } }`, setting
-`phoenix.project` in a project file drops the global `phoenix.endpoint` — which
-is exactly the surprise `"merge"` was supposed to avoid. Flat config shapes
-merge predictably; nested ones do not.
+Between them, the question is what a **nested object** means in your config. For
+a shape like `{ phoenix: { endpoint, project } }`, setting `phoenix.project` in
+a project file drops the global `phoenix.endpoint` under `"shallow-merge"`, and
+keeps it under `"deep-merge"`. Neither is wrong: pick `"deep-merge"` when nested
+keys are independent knobs like any other, and `"shallow-merge"` when a block is
+a cohesive unit — a credentials pair, say, where inheriting half from one file
+and half from another is worse than replacing the whole thing.
+
+Both merge strategies share one caveat: **arrays are replaced, never
+concatenated**. If your config carries a list, the project file's list wins
+entirely.
+
+Under every strategy, the returned config shares nothing with the `defaults` you
+passed in, all the way down — mutating it cannot leak into the module-level
+constant your extension keeps them in.
+
+That isolation is a `structuredClone` of `defaults`, so they must be
+structured-cloneable: JSON-shaped values, plus `Date`, `Map`, `Set` and friends.
+A function throws, and a class instance comes back as a plain object with its
+prototype gone. Neither belongs in something that mirrors a `config.json`.
 
 ### `getConfigPaths(extensionId, options?): string[]`
 
@@ -134,7 +150,7 @@ interface ConfigLocationOptions {
 }
 
 interface LoadConfigOptions extends ConfigLocationOptions {
-  strategy?: "first-match" | "merge"; // default "first-match"
+  strategy?: "first-match" | "shallow-merge" | "deep-merge"; // default "first-match"
 }
 ```
 
@@ -154,10 +170,10 @@ answered differently:
 - **Malformed project file** — fall through to global with a diagnostic,
     rather than giving up.
 
-Combining files is deliberately *not* one of them: both `"first-match"` and
-`"merge"` are defensible, they suit different config shapes, and the choice
-belongs to whoever wrote the extension. What matters is that the location and
-detection rules are identical either way.
+Combining files is deliberately *not* one of them: all three strategies are
+defensible, they suit different config shapes, and the choice belongs to
+whoever wrote the extension. What matters is that the location and detection
+rules are identical either way.
 
 ## License
 
