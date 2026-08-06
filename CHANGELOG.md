@@ -6,13 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-08-06
 
 ### Added
 
 - `ConfigLocationOptions.includeProject` optionally disables the project tier.
   It defaults to `true` for backward compatibility; when `false`, config lookup
   uses only the global tier.
+
+### Changed
+
+- Relaxed `@types/node` dependency from `^22.15.3` to `^22` to avoid pinning
+  an arbitrary minimum patch version.
 
 ## [0.1.0] - 2026-07-28
 
@@ -44,5 +49,6 @@ First release. Nothing was published before this, so everything below is new.
     location rather than stranding the extension. Nothing is ever written to the
     console: reporting is the extension's call.
 
-[Unreleased]: https://github.com/graelo/pi-ext-config/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/graelo/pi-ext-config/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/graelo/pi-ext-config/releases/tag/v0.2.0
 [0.1.0]: https://github.com/graelo/pi-ext-config/releases/tag/v0.1.0
