@@ -52,6 +52,8 @@ export interface ConfigLocationOptions {
    * honours `PI_CODING_AGENT_DIR` and expands a leading `~`. Intended for tests.
    */
   agentDir?: string;
+  /** Whether to consider the project config tier. Defaults to `true`. */
+  includeProject?: boolean;
 }
 
 /**
@@ -67,11 +69,13 @@ export function getConfigPaths(
 ): string[] {
   const paths: string[] = [];
 
-  const gitRoot = findGitRoot(options.cwd ?? process.cwd());
-  if (gitRoot) {
-    paths.push(
-      resolve(gitRoot, PROJECT_CONFIG_DIR, "extensions", extensionId, CONFIG_FILENAME),
-    );
+  if (options.includeProject !== false) {
+    const gitRoot = findGitRoot(options.cwd ?? process.cwd());
+    if (gitRoot) {
+      paths.push(
+        resolve(gitRoot, PROJECT_CONFIG_DIR, "extensions", extensionId, CONFIG_FILENAME),
+      );
+    }
   }
 
   const agentDir = options.agentDir ?? getAgentDir();

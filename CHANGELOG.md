@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `ConfigLocationOptions.includeProject` optionally disables the project tier.
+  It defaults to `true` for backward compatibility; when `false`, config lookup
+  uses only the global tier.
+
 ## [0.1.0] - 2026-07-28
 
 First release. Nothing was published before this, so everything below is new.

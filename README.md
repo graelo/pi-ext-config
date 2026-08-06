@@ -62,7 +62,8 @@ const { config } = loadConfig("pi-my-extension", DEFAULTS, {
 
 Pass `ctx.cwd` when you have it. Without it the repo root is resolved from
 `process.cwd()`, which is usually right but not always the directory the user
-means.
+means. Set `includeProject: false` when an extension must use only the global
+config tier.
 
 ## API
 
@@ -136,6 +137,8 @@ error message that tells the user where a config file could go.
 The project path is **omitted entirely** when the working directory is not
 inside a git repository — a bare `./.pi/extensions/...` relative to wherever the
 agent happens to have been started is not something anyone means to configure.
+It is also omitted when `options.includeProject` is `false`, leaving only the
+global candidate.
 
 ### `resolveConfigPath(extensionId, options?): string | null`
 
@@ -155,14 +158,19 @@ here — it breaks both.
 
 ```ts
 interface ConfigLocationOptions {
-  cwd?: string;       // where to start looking for the repo root; default process.cwd()
-  agentDir?: string;  // overrides the agent directory; intended for tests
+  cwd?: string;             // where to start looking for the repo root; default process.cwd()
+  agentDir?: string;        // overrides the agent directory; intended for tests
+  includeProject?: boolean; // include the project tier; default true
 }
 
 interface LoadConfigOptions extends ConfigLocationOptions {
   strategy?: "first-match" | "shallow-merge" | "deep-merge"; // default "first-match"
 }
 ```
+
+`includeProject` defaults to `true`; set it to `false` to make
+`getConfigPaths()`, `resolveConfigPath()`, and `loadConfig()` use only the global
+config tier.
 
 `agentDir` defaults to pi's own `getAgentDir()`, which already honours
 `PI_CODING_AGENT_DIR` and expands a leading `~`. Do not re-implement that chain:

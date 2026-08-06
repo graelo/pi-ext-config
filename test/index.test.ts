@@ -108,6 +108,12 @@ describe("getConfigPaths", () => {
     ]);
   });
 
+  it("uses only the global path when includeProject is false", () => {
+    expect(
+      getConfigPaths(EXTENSION_ID, { cwd: repo, agentDir, includeProject: false }),
+    ).toEqual([resolve(agentDir, "extensions", EXTENSION_ID, CONFIG_FILENAME)]);
+  });
+
   it("honours PI_CODING_AGENT_DIR when no agentDir is given", () => {
     const previous = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -138,6 +144,14 @@ describe("resolveConfigPath", () => {
     const global = writeGlobalConfig("{}");
     expect(resolveConfigPath(EXTENSION_ID, { cwd: repo, agentDir })).toBe(global);
   });
+
+  it("ignores a project file when includeProject is false", () => {
+    const global = writeGlobalConfig("{}");
+    writeProjectConfig(repo, "{}");
+    expect(
+      resolveConfigPath(EXTENSION_ID, { cwd: repo, agentDir, includeProject: false }),
+    ).toBe(global);
+  });
 });
 
 describe("loadConfig", () => {
@@ -164,6 +178,20 @@ describe("loadConfig", () => {
     expect(loaded.sources).toEqual([project]);
     // First match wins: the global timeoutMs is not layered in, the default is used.
     expect(loaded.config).toEqual({ url: "http://project", timeoutMs: 30000 });
+  });
+
+  it("uses only global config when includeProject is false", () => {
+    const global = writeGlobalConfig(JSON.stringify({ url: "http://global" }));
+    writeProjectConfig(repo, JSON.stringify({ url: "http://project" }));
+
+    const loaded = loadConfig(EXTENSION_ID, DEFAULTS, {
+      cwd: repo,
+      agentDir,
+      includeProject: false,
+    });
+    expect(loaded.config).toEqual({ url: "http://global", timeoutMs: 30000 });
+    expect(loaded.sources).toEqual([global]);
+    expect(loaded.candidates).toEqual([global]);
   });
 
   it("finds the project file from a nested working directory", () => {
